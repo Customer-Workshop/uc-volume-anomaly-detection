@@ -1,10 +1,12 @@
 """Anomaly Detection Agent — establishes baselines and identifies volume deviations."""
 
+import argparse
 import csv
 import logging
+import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from src.detectors.seasonal_detector import SeasonalDetector
 from src.detectors.zscore_detector import ZScoreDetector
@@ -114,3 +116,84 @@ class AnomalyDetectionAgent:
 
         self.detected_anomalies.extend(anomalies)
         return anomalies
+
+
+def main() -> int:
+    """Run batch anomaly detection from the command line."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", default="data/historical/sample_transactions.csv")
+    parser.add_argument("--mode", choices=("batch", "live"), default="batch")
+    parser.add_argument(
+        "--log-level",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        default="INFO",
+    )
+    args = parser.parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(levelname)s: %(message)s",
+    )
+
+    if args.mode == "live":
+        print(
+            "Live mode requires a METRICS_ENDPOINT metrics client, "
+            "which is not implemented yet.",
+            file=sys.stderr,
+        )
+        return 1
+
+    agent = AnomalyDetectionAgent()
+    historical_data = agent.load_historical_data(args.data)
+    if not historical_data:
+        print(f"No historical data loaded from {args.data}.", file=sys.stderr)
+        return 1
+
+    agent.build_baselines(historical_data)
+    if not any(agent.baselines.values()):
+        print(
+            "No anomalies detected because no seasonal baselines were built. "
+            "Generate more data with "
+            "`python -m src.utils.generate_sample_data`."
+        )
+        return 0
+
+    anomalies_by_series: Counter[str] = Counter()
+    detected: list[tuple[datetime, AnomalyEvent]] = []
+    for key, series in historical_data.items():
+        for observation in series.observations:
+            for anomaly in agent.analyze(observation):
+                anomalies_by_series[key] += 1
+                detected.append((observation.timestamp, anomaly))
+
+    print("Detected anomalies by series:")
+    for key, series in historical_data.items():
+        print(
+            f"  {series.service_name}{series.endpoint}: "
+            f"{anomalies_by_series[key]}"
+        )
+
+    if not detected:
+        print("No anomalies detected.")
+        return 0
+
+    for timestamp, anomaly in detected:
+        print(
+            f"{timestamp.isoformat()} {anomaly.service_name}{anomaly.endpoint} "
+            f"type={anomaly.anomaly_type.value} severity={anomaly.severity.value} "
+            f"observed={anomaly.observed_value:.1f} "
+            f"expected={anomaly.expected_value:.1f} "
+            f"deviation={anomaly.deviation_score:.2f}"
+        )
+
+    severity_counts = Counter(anomaly.severity.value for _, anomaly in detected)
+    totals = ", ".join(
+        f"{severity}={severity_counts[severity]}"
+        for severity in ("low", "medium", "high", "critical")
+        if severity_counts[severity]
+    )
+    print(f"Totals by severity: {totals}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

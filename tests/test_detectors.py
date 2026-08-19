@@ -95,21 +95,21 @@ class TestSeasonalDetector:
             endpoint="/api/test",
             observations=[
                 TransactionVolume(
-                    timestamp=datetime(2026, 1, 6, 10, 0),  # Monday 10am
+                    timestamp=datetime(2026, 1, 5, 10, 0),  # Monday 10am
                     service_name="test-service",
                     endpoint="/api/test",
                     count=100,
                     avg_latency_ms=50.0,
                 ),
                 TransactionVolume(
-                    timestamp=datetime(2026, 1, 13, 10, 0),  # Monday 10am
+                    timestamp=datetime(2026, 1, 12, 10, 0),  # Monday 10am
                     service_name="test-service",
                     endpoint="/api/test",
                     count=120,
                     avg_latency_ms=55.0,
                 ),
                 TransactionVolume(
-                    timestamp=datetime(2026, 1, 20, 10, 0),  # Monday 10am
+                    timestamp=datetime(2026, 1, 19, 10, 0),  # Monday 10am
                     service_name="test-service",
                     endpoint="/api/test",
                     count=110,
