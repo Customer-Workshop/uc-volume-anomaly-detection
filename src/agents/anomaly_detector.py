@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from src.detectors.iqr_detector import IQRBounds, IQRDetector
 from src.detectors.seasonal_detector import SeasonalDetector
 from src.detectors.zscore_detector import ZScoreDetector
 from src.models.anomaly import AnomalyEvent
@@ -22,6 +23,8 @@ class AnomalyDetectionAgent:
         zscore_warning: float = 2.0,
         zscore_critical: float = 3.0,
         seasonal_threshold: float = 2.5,
+        iqr_multiplier: float = 1.5,
+        iqr_critical_multiplier: float = 3.0,
     ) -> None:
         self.zscore_detector = ZScoreDetector(
             warning_threshold=zscore_warning,
@@ -30,7 +33,12 @@ class AnomalyDetectionAgent:
         self.seasonal_detector = SeasonalDetector(
             deviation_threshold=seasonal_threshold,
         )
+        self.iqr_detector = IQRDetector(
+            iqr_multiplier=iqr_multiplier,
+            critical_multiplier=iqr_critical_multiplier,
+        )
         self.baselines: dict[str, list[VolumeBaseline]] = {}
+        self.iqr_bounds: dict[str, IQRBounds] = {}
         self.detected_anomalies: list[AnomalyEvent] = []
 
     def load_historical_data(self, csv_path: str) -> dict[str, VolumeTimeSeries]:
@@ -73,6 +81,9 @@ class AnomalyDetectionAgent:
         for key, series in historical_data.items():
             baselines = self.seasonal_detector.build_baselines(series)
             self.baselines[key] = baselines
+            iqr_bounds = self.iqr_detector.build_bounds(series)
+            if iqr_bounds is not None:
+                self.iqr_bounds[key] = iqr_bounds
 
         total = sum(len(bl) for bl in self.baselines.values())
         logger.info("Built %d baselines across %d series", total, len(self.baselines))
@@ -111,6 +122,13 @@ class AnomalyDetectionAgent:
             )
             if latency_anomaly:
                 anomalies.append(latency_anomaly)
+
+        # IQR detection against series-wide quartile bounds
+        iqr_bounds = self.iqr_bounds.get(key)
+        if iqr_bounds:
+            iqr_anomaly = self.iqr_detector.detect(observation, iqr_bounds)
+            if iqr_anomaly:
+                anomalies.append(iqr_anomaly)
 
         self.detected_anomalies.extend(anomalies)
         return anomalies
