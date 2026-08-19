@@ -128,7 +128,16 @@ def main() -> int:
         choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
         default="INFO",
     )
+    parser.add_argument(
+        "--max-details",
+        type=int,
+        default=20,
+        metavar="N",
+        help="maximum number of anomaly details to print (default: 20)",
+    )
     args = parser.parse_args()
+    if args.max_details < 0:
+        parser.error("--max-details must be non-negative")
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(levelname)s: %(message)s",
@@ -176,7 +185,17 @@ def main() -> int:
         print("No anomalies detected.")
         return 0
 
-    for timestamp, anomaly in detected:
+    sorted_anomalies = sorted(
+        detected,
+        key=lambda item: item[1].deviation_score,
+        reverse=True,
+    )
+    details = sorted_anomalies[: args.max_details]
+    print(
+        f"Showing top {len(details)} of {len(detected)} anomalies "
+        "by deviation score:"
+    )
+    for timestamp, anomaly in details:
         print(
             f"{timestamp.isoformat()} {anomaly.service_name}{anomaly.endpoint} "
             f"type={anomaly.anomaly_type.value} severity={anomaly.severity.value} "

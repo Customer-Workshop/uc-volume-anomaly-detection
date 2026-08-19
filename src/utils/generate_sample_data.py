@@ -123,7 +123,11 @@ def generate_sample_data(
     )
     incidents: dict[tuple[datetime, SampleEndpoint], tuple[float, float, float]] = {}
     if endpoints:
-        incidents[(spike_timestamp, endpoints[0])] = (1.65, 2.0, 0.08)
+        for offset in range(3):
+            incident_timestamp = spike_timestamp + timedelta(hours=offset)
+            if incident_timestamp > last_timestamp:
+                break
+            incidents[(incident_timestamp, endpoints[0])] = (1.65, 2.0, 0.08)
         if len(endpoints) > 1:
             incidents[(drop_timestamp, endpoints[1])] = (0.4, 1.0, 0.01)
     rows: list[list[object]] = []
