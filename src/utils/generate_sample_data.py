@@ -112,36 +112,40 @@ def generate_sample_data(
     end_time = end_time or datetime(2026, 4, 1)
     start_time = end_time - timedelta(days=days)
     endpoints = _load_endpoints()
-    bucket_noise: dict[tuple[str, str, int, int], tuple[float, float]] = {}
+    last_timestamp = end_time - timedelta(hours=1)
+    spike_timestamp = min(
+        last_timestamp,
+        max(start_time + timedelta(hours=1), end_time - timedelta(days=5)),
+    )
+    drop_timestamp = min(
+        last_timestamp,
+        max(start_time + timedelta(hours=2), end_time - timedelta(days=3)),
+    )
+    incidents: dict[tuple[datetime, SampleEndpoint], tuple[float, float, float]] = {}
+    if endpoints:
+        incidents[(spike_timestamp, endpoints[0])] = (1.65, 2.0, 0.08)
+        if len(endpoints) > 1:
+            incidents[(drop_timestamp, endpoints[1])] = (0.4, 1.0, 0.01)
     rows: list[list[object]] = []
 
     for hour_index in range(days * 24):
         timestamp = start_time + timedelta(hours=hour_index)
         for endpoint in endpoints:
             expected = max(1.0, _base_count(endpoint) * _hourly_shape(timestamp))
-            bucket_key = (
-                endpoint.service_name,
-                endpoint.endpoint,
-                timestamp.hour,
-                timestamp.weekday(),
-            )
-            if bucket_key not in bucket_noise:
-                bucket_noise[bucket_key] = (
-                    rng.uniform(-0.002, 0.002),
-                    rng.uniform(-0.2, 0.2),
-                )
-            count_noise, latency_noise = bucket_noise[bucket_key]
-            count = max(1, round(expected * (1.0 + count_noise)))
+            count = max(1, round(rng.gauss(expected, expected * 0.06)))
+            baseline_latency = 28.0 + (count / _base_count(endpoint)) * 18.0
             avg_latency = max(
                 5.0,
-                28.0
-                + (count / _base_count(endpoint)) * 18.0
-                + latency_noise,
+                rng.gauss(baseline_latency, max(1.0, baseline_latency * 0.08)),
             )
-            error_count = max(
-                0,
-                round(count * (0.01 + rng.uniform(-0.001, 0.001))),
-            )
+            error_rate = max(0.0, rng.gauss(0.01, 0.002))
+            error_count = max(0, round(count * error_rate))
+            incident = incidents.get((timestamp, endpoint))
+            if incident:
+                count_multiplier, latency_multiplier, incident_error_rate = incident
+                count = max(1, round(count * count_multiplier))
+                avg_latency = max(5.0, avg_latency * latency_multiplier)
+                error_count = max(error_count, round(count * incident_error_rate))
             rows.append(
                 [
                     timestamp.isoformat(timespec="seconds"),
@@ -150,25 +154,9 @@ def generate_sample_data(
                     count,
                     error_count,
                     round(avg_latency, 1),
-                    round(avg_latency * 2.2 + rng.uniform(-0.5, 0.5), 1),
+                    round(avg_latency * 2.2 + rng.gauss(0, 4.0), 1),
                 ]
             )
-
-    # Add a small number of deterministic incidents after the normal pattern.
-    if rows:
-        first_endpoint = endpoints[0]
-        anomaly_index = (days * 24 - 2) * len(endpoints)
-        rows[anomaly_index][3] = max(1, round(float(rows[anomaly_index][3]) * 4.0))
-        rows[anomaly_index][4] = max(1, round(float(rows[anomaly_index][4]) * 3.0))
-        rows[anomaly_index][5] = round(float(rows[anomaly_index][5]) * 1.8, 1)
-        logger.debug(
-            "Injected spike for %s/%s",
-            first_endpoint.service_name,
-            first_endpoint.endpoint,
-        )
-        if len(endpoints) > 1:
-            drop_index = (days * 24 - 1) * len(endpoints) + 1
-            rows[drop_index][3] = max(1, round(float(rows[drop_index][3]) * 0.1))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="") as output_file:
