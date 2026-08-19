@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from src.detectors.ewma_detector import EWMADetector
 from src.detectors.zscore_detector import ZScoreDetector
 from src.detectors.seasonal_detector import SeasonalDetector, _mean, _std
 from src.models.anomaly import AnomalySeverity, AnomalyType
@@ -76,6 +77,89 @@ class TestZScoreDetector:
         assert result.severity == AnomalySeverity.MEDIUM
 
         # 4 std devs -> HIGH
+        obs_high = TransactionVolume(
+            timestamp=datetime(2026, 3, 10, 12, 0),
+            service_name="payment-service",
+            endpoint="/api/v1/payments",
+            count=1400,
+        )
+        result_high = detector.detect(obs_high, baseline)
+        assert result_high is not None
+        assert result_high.severity == AnomalySeverity.HIGH
+
+
+class TestEWMADetector:
+    def _make_baseline(self) -> VolumeBaseline:
+        return VolumeBaseline(
+            service_name="payment-service",
+            endpoint="/api/v1/payments",
+            hour_of_day=12,
+            day_of_week=1,
+            mean_count=1000.0,
+            std_count=100.0,
+            mean_latency_ms=50.0,
+            std_latency_ms=10.0,
+            sample_size=30,
+        )
+
+    def test_no_anomaly_within_threshold(self):
+        detector = EWMADetector(alpha=0.3, warning_threshold=2.0, critical_threshold=3.0)
+        baseline = self._make_baseline()
+        obs = TransactionVolume(
+            timestamp=datetime(2026, 3, 10, 12, 0),
+            service_name="payment-service",
+            endpoint="/api/v1/payments",
+            count=1050,
+        )
+        result = detector.detect(obs, baseline)
+        assert result is None
+
+    def test_detects_volume_spike(self):
+        detector = EWMADetector(alpha=0.3, warning_threshold=2.0, critical_threshold=3.0)
+        baseline = self._make_baseline()
+        obs = TransactionVolume(
+            timestamp=datetime(2026, 3, 10, 12, 0),
+            service_name="payment-service",
+            endpoint="/api/v1/payments",
+            count=1500,  # 5 std devs above the initial EWMA
+        )
+        result = detector.detect(obs, baseline)
+        assert result is not None
+        assert result.anomaly_type == AnomalyType.VOLUME_SPIKE
+        assert result.expected_value == baseline.mean_count
+        assert result.deviation_score == 5.0
+
+    def test_detects_volume_drop(self):
+        detector = EWMADetector(alpha=0.3, warning_threshold=2.0, critical_threshold=3.0)
+        baseline = self._make_baseline()
+        obs = TransactionVolume(
+            timestamp=datetime(2026, 3, 10, 12, 0),
+            service_name="payment-service",
+            endpoint="/api/v1/payments",
+            count=500,  # 5 std devs below the initial EWMA
+        )
+        result = detector.detect(obs, baseline)
+        assert result is not None
+        assert result.anomaly_type == AnomalyType.VOLUME_DROP
+        assert result.expected_value == baseline.mean_count
+        assert result.deviation_score == 5.0
+
+    def test_severity_classification(self):
+        detector = EWMADetector(alpha=0.3, warning_threshold=2.0, critical_threshold=3.0)
+        baseline = self._make_baseline()
+
+        # 2.5 std devs -> MEDIUM
+        obs = TransactionVolume(
+            timestamp=datetime(2026, 3, 10, 12, 0),
+            service_name="payment-service",
+            endpoint="/api/v1/payments",
+            count=1250,
+        )
+        result = detector.detect(obs, baseline)
+        assert result is not None
+        assert result.severity == AnomalySeverity.MEDIUM
+
+        # More than 3 std devs -> HIGH
         obs_high = TransactionVolume(
             timestamp=datetime(2026, 3, 10, 12, 0),
             service_name="payment-service",

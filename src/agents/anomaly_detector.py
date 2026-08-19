@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from src.detectors.ewma_detector import EWMADetector
 from src.detectors.seasonal_detector import SeasonalDetector
 from src.detectors.zscore_detector import ZScoreDetector
 from src.models.anomaly import AnomalyEvent
@@ -22,6 +23,9 @@ class AnomalyDetectionAgent:
         zscore_warning: float = 2.0,
         zscore_critical: float = 3.0,
         seasonal_threshold: float = 2.5,
+        ewma_alpha: float = 0.3,
+        ewma_warning: float = 2.0,
+        ewma_critical: float = 3.0,
     ) -> None:
         self.zscore_detector = ZScoreDetector(
             warning_threshold=zscore_warning,
@@ -29,6 +33,11 @@ class AnomalyDetectionAgent:
         )
         self.seasonal_detector = SeasonalDetector(
             deviation_threshold=seasonal_threshold,
+        )
+        self.ewma_detector = EWMADetector(
+            alpha=ewma_alpha,
+            warning_threshold=ewma_warning,
+            critical_threshold=ewma_critical,
         )
         self.baselines: dict[str, list[VolumeBaseline]] = {}
         self.detected_anomalies: list[AnomalyEvent] = []
@@ -105,6 +114,10 @@ class AnomalyDetectionAgent:
             zscore_anomaly = self.zscore_detector.detect(observation, matching_baseline)
             if zscore_anomaly:
                 anomalies.append(zscore_anomaly)
+
+            ewma_anomaly = self.ewma_detector.detect(observation, matching_baseline)
+            if ewma_anomaly:
+                anomalies.append(ewma_anomaly)
 
             latency_anomaly = self.zscore_detector.detect_latency(
                 observation, matching_baseline
